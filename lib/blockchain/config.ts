@@ -23,12 +23,12 @@ const DEFAULT_CONFIG: BlockchainConfig = {
   rpcUrl: "https://polygon-rpc.com/",
   contracts: {
     nftContract: {
-      address: "0x8bAcFBA121157C87C846c435a2fdFD6dAE7a9432",
+      address: "0x7e25b679935F8516BF1F8fC490D07F41F06d2945",
       abi: PUGLIA_VACATION_ABI,
       isDeployed: true,
     },
     marketplaceContract: {
-      address: "0x8bAcFBA121157C87C846c435a2fdFD6dAE7a9432", // Same contract handles marketplace
+      address: "0x7e25b679935F8516BF1F8fC490D07F41F06d2945", // Same contract handles marketplace
       abi: PUGLIA_VACATION_ABI,
       isDeployed: true,
     },

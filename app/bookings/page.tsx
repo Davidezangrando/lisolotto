@@ -6,213 +6,99 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { Calendar, Users, Star, Anchor } from "lucide-react"
+import { Calendar, MapPin, Loader2, CheckCircle } from "lucide-react"
 import { useWallet } from "@/lib/blockchain/wallet"
-import { pugliaContract, type VacationWeek } from "@/lib/blockchain/puglia-contract"
+import { pugliaContract } from "@/lib/blockchain/puglia-contract"
+import { NFTService, type UserTokenInfo, type VacationSlot } from "@/lib/nft"
 import { useAuth } from "@/hooks/use-auth"
+import { toast } from "sonner"
 
-interface VacationWeekWithId extends VacationWeek {
-  weekId: number
-}
-
-interface BookingData {
-  guestName: string
-  contactInfo: string
-  specialRequests: string
-}
-
-interface NFTSelectionState {
-  requiredNFTs: number
-  selectedNFTs: bigint[]
-  showNFTSelection: boolean
-  isApproving: boolean
-  approvalStep: number
+interface AvailableSlot extends VacationSlot {
+  tokenId: number
 }
 
 export default function BookingsPage() {
-  const [vacationWeeks, setVacationWeeks] = useState<VacationWeekWithId[]>([])
-  const [selectedWeek, setSelectedWeek] = useState<VacationWeekWithId | null>(null)
-  const [showBookingForm, setShowBookingForm] = useState(false)
-  const [bookingData, setBookingData] = useState<BookingData>({
-    guestName: "",
-    contactInfo: "",
-    specialRequests: "",
-  })
+  const [userTokens, setUserTokens] = useState<UserTokenInfo[]>([])
+  const [availableSlots, setAvailableSlots] = useState<AvailableSlot[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isBooking, setIsBooking] = useState(false)
-  const [userNFTs, setUserNFTs] = useState<bigint[]>([])
+
+  const [selectedSlot, setSelectedSlot] = useState<AvailableSlot | null>(null)
+  const [showConfirmDialog, setShowConfirmDialog] = useState(false)
 
   const { isConnected, walletAddress, connectWallet } = useWallet()
   const { user } = useAuth()
   const router = useRouter()
 
-  const [nftSelection, setNftSelection] = useState<NFTSelectionState>({
-    requiredNFTs: 0,
-    selectedNFTs: [],
-    showNFTSelection: false,
-    isApproving: false,
-    approvalStep: 0,
-  })
-
+  // Load user tokens and their available vacation slots
   useEffect(() => {
-    const loadVacationWeeks = async () => {
-      try {
-        console.log("[v0] Loading vacation weeks from contract...")
-        const weeks = await pugliaContract.getAllActiveVacationWeeks()
-        console.log("[v0] Loaded vacation weeks:", weeks)
-        setVacationWeeks(weeks)
+    const loadData = async () => {
+      if (!isConnected || !walletAddress) {
+        setUserTokens([])
+        setAvailableSlots([])
+        setIsLoading(false)
+        return
+      }
 
-        // Load user NFTs if wallet is connected
-        if (isConnected && walletAddress) {
-          const nfts = await pugliaContract.getInvestorAvailableNFTs(walletAddress)
-          console.log("[v0] User NFTs:", nfts)
-          setUserNFTs(nfts)
+      try {
+        setIsLoading(true)
+        const tokens = await NFTService.getUserTokens(walletAddress)
+        setUserTokens(tokens)
+
+        // For each token, fetch available vacation details
+        const slots: AvailableSlot[] = []
+        for (const token of tokens) {
+          for (const vacId of token.availableVacations) {
+            const slot = await NFTService.getVacationSlot(vacId)
+            if (slot && !slot.isBooked) {
+              slots.push({ ...slot, tokenId: token.tokenId })
+            }
+          }
         }
+
+        setAvailableSlots(slots)
       } catch (error) {
-        console.error("[v0] Error loading vacation weeks:", error)
+        console.error("Error loading booking data:", error)
+        toast.error("Error loading vacation data")
       } finally {
         setIsLoading(false)
       }
     }
 
-    loadVacationWeeks()
+    loadData()
   }, [isConnected, walletAddress])
 
-  const handleBookWeek = async (week: VacationWeekWithId) => {
-    if (!isConnected || !walletAddress) {
-      await connectWallet()
-      return
-    }
-
-    // Check if user can book this week
-    try {
-      const [canBook, message] = await pugliaContract.canBookWeek(walletAddress, week.weekId)
-      if (!canBook) {
-        alert(`Cannot book: ${message}`)
-        return
-      }
-
-      setSelectedWeek(week)
-      setShowBookingForm(true)
-    } catch (error) {
-      console.error("[v0] Error checking booking eligibility:", error)
-      alert("Error checking booking eligibility")
-    }
+  const handleBookSlot = (slot: AvailableSlot) => {
+    setSelectedSlot(slot)
+    setShowConfirmDialog(true)
   }
 
   const handleConfirmBooking = async () => {
-    if (!selectedWeek || !walletAddress || !bookingData.guestName || !bookingData.contactInfo) {
-      alert("Please fill in all required fields")
-      return
-    }
+    if (!selectedSlot || !walletAddress) return
 
+    setIsBooking(true)
     try {
-      const requiredNFTs = await pugliaContract.getSeasonCost(selectedWeek.season)
-      console.log("[v0] Required NFTs for booking:", requiredNFTs)
+      const tx = await pugliaContract.bookVacation(selectedSlot.tokenId, selectedSlot.vacationId)
+      toast.info("Transaction submitted, waiting for confirmation...")
+      await tx.wait()
+      toast.success("Vacation booked successfully!")
 
-      if (userNFTs.length < Number(requiredNFTs)) {
-        alert(`You need ${requiredNFTs} NFTs but only have ${userNFTs.length} available`)
-        return
-      }
-
-      setNftSelection({
-        requiredNFTs: Number(requiredNFTs),
-        selectedNFTs: [],
-        showNFTSelection: true,
-        isApproving: false,
-        approvalStep: 0,
-      })
-    } catch (error) {
-      console.error("[v0] Error getting season cost:", error)
-      alert("Error calculating required NFTs")
-    }
-  }
-
-  const handleNFTSelection = (tokenId: bigint, selected: boolean) => {
-    setNftSelection((prev) => {
-      const newSelected = selected ? [...prev.selectedNFTs, tokenId] : prev.selectedNFTs.filter((id) => id !== tokenId)
-
-      return {
-        ...prev,
-        selectedNFTs: newSelected,
-      }
-    })
-  }
-
-  const handleFinalBooking = async () => {
-    if (!selectedWeek || !walletAddress || nftSelection.selectedNFTs.length !== nftSelection.requiredNFTs) {
-      alert(`Please select exactly ${nftSelection.requiredNFTs} NFTs`)
-      return
-    }
-
-    setNftSelection((prev) => ({ ...prev, isApproving: true, approvalStep: 0 }))
-
-    try {
-      console.log("[v0] Starting NFT approvals...")
-
-      for (let i = 0; i < nftSelection.selectedNFTs.length; i++) {
-        const tokenId = nftSelection.selectedNFTs[i]
-        setNftSelection((prev) => ({ ...prev, approvalStep: i + 1 }))
-
-        console.log(`[v0] Approving NFT ${tokenId} (${i + 1}/${nftSelection.selectedNFTs.length})`)
-        const approveTx = await pugliaContract.approveNFT(tokenId)
-        await approveTx.wait()
-        console.log(`[v0] NFT ${tokenId} approved successfully`)
-      }
-
-      console.log("[v0] Saving booking data to Supabase:", bookingData)
-      // TODO: Implement Supabase save
-
-      console.log("[v0] Booking vacation week with contract...")
-      const bookingTx = await pugliaContract.bookVacationWeek(
-        selectedWeek.weekId,
-        nftSelection.selectedNFTs,
-        bookingData.guestName,
-        bookingData.contactInfo,
+      // Remove the booked slot from the list
+      setAvailableSlots((prev) =>
+        prev.filter((s) => !(s.tokenId === selectedSlot.tokenId && s.vacationId === selectedSlot.vacationId)),
       )
 
-      console.log("[v0] Booking transaction sent:", bookingTx.hash)
-      await bookingTx.wait()
-      console.log("[v0] Booking confirmed!")
+      // Reload tokens to get updated metadata
+      const updatedTokens = await NFTService.getUserTokens(walletAddress)
+      setUserTokens(updatedTokens)
 
-      alert("Vacation booked successfully!")
-
-      setShowBookingForm(false)
-      setSelectedWeek(null)
-      setBookingData({ guestName: "", contactInfo: "", specialRequests: "" })
-      setNftSelection({
-        requiredNFTs: 0,
-        selectedNFTs: [],
-        showNFTSelection: false,
-        isApproving: false,
-        approvalStep: 0,
-      })
-
-      const updatedNFTs = await pugliaContract.getInvestorAvailableNFTs(walletAddress)
-      setUserNFTs(updatedNFTs)
-    } catch (error) {
-      console.error("[v0] Error during booking process:", error)
-      alert("Error during booking process. Please try again.")
+      setShowConfirmDialog(false)
+      setSelectedSlot(null)
+    } catch (error: any) {
+      console.error("Error booking vacation:", error)
+      toast.error(error.reason || error.message || "Error during booking")
     } finally {
-      setNftSelection((prev) => ({ ...prev, isApproving: false, approvalStep: 0 }))
-    }
-  }
-
-  const getSeasonBadgeColor = (season: number) => {
-    switch (season) {
-      case 0:
-        return "bg-green-100 text-green-800"
-      case 1:
-        return "bg-yellow-100 text-yellow-800"
-      case 2:
-        return "bg-orange-100 text-orange-800"
-      case 3:
-        return "bg-red-100 text-red-800"
-      default:
-        return "bg-gray-100 text-gray-800"
+      setIsBooking(false)
     }
   }
 
@@ -227,6 +113,10 @@ export default function BookingsPage() {
       </div>
     )
   }
+
+  const totalAvailable = availableSlots.length
+  const totalWeeks = userTokens.reduce((sum, t) => sum + t.totalVacations, 0)
+  const usedWeeks = userTokens.reduce((sum, t) => sum + t.usedVacations, 0)
 
   return (
     <div className="min-h-screen bg-background">
@@ -243,8 +133,10 @@ export default function BookingsPage() {
                 <Button onClick={connectWallet}>Connect Wallet</Button>
               ) : (
                 <div className="text-sm text-muted-foreground">
-                  <p>NFTs Available: {userNFTs.length}/8</p>
-                  <p className="truncate">{walletAddress}</p>
+                  <p>
+                    Credits: {totalWeeks - usedWeeks} remaining / {totalWeeks} total
+                  </p>
+                  <p className="truncate max-w-[200px]">{walletAddress}</p>
                 </div>
               )}
               <Button variant="outline" onClick={() => router.push("/dashboard")}>
@@ -257,231 +149,147 @@ export default function BookingsPage() {
 
       {/* Main Content */}
       <div className="container mx-auto px-4 py-8">
-        {isLoading ? (
-          <div className="text-center py-12">
-            <p>Loading vacation weeks...</p>
-          </div>
-        ) : vacationWeeks.length === 0 ? (
-          <div className="text-center py-12">
-            <p className="text-muted-foreground">No active vacation weeks available</p>
-          </div>
+        {!isConnected ? (
+          <Card>
+            <CardContent className="text-center py-12">
+              <p className="text-muted-foreground mb-4">
+                Connect your wallet to see available vacation slots from your NFTs
+              </p>
+              <Button onClick={connectWallet}>Connect Wallet</Button>
+            </CardContent>
+          </Card>
+        ) : isLoading ? (
+          <Card>
+            <CardContent className="flex items-center justify-center py-12 gap-3">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <p className="text-muted-foreground">Loading your available vacations...</p>
+            </CardContent>
+          </Card>
+        ) : userTokens.length === 0 ? (
+          <Card>
+            <CardContent className="text-center py-12">
+              <p className="text-muted-foreground mb-4">No NFTs found for this wallet</p>
+              <p className="text-sm text-muted-foreground">
+                You need a Puglia Vacation NFT to book vacations
+              </p>
+            </CardContent>
+          </Card>
+        ) : availableSlots.length === 0 ? (
+          <Card>
+            <CardContent className="text-center py-12">
+              <p className="text-muted-foreground mb-4">No available vacation slots</p>
+              <p className="text-sm text-muted-foreground">
+                All your vacation slots are either booked or used
+              </p>
+              <Button variant="outline" className="mt-4" onClick={() => router.push("/dashboard")}>
+                View Dashboard
+              </Button>
+            </CardContent>
+          </Card>
         ) : (
-          <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {vacationWeeks.map((week) => (
-              <Card key={week.weekId} className="overflow-hidden">
-                <CardHeader>
-                  <div className="flex justify-between items-start">
-                    <CardTitle className="text-lg">Week #{week.weekId}</CardTitle>
-                    <Badge className={getSeasonBadgeColor(week.season)}>
-                      {pugliaContract.getSeasonName(week.season)}
-                    </Badge>
-                  </div>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Calendar className="h-4 w-4" />
-                    <span>
-                      {pugliaContract.formatDate(week.startDate)} - {pugliaContract.formatDate(week.endDate)}
-                    </span>
-                  </div>
+          <>
+            <div className="mb-6">
+              <h2 className="text-xl font-semibold mb-1">
+                Available Vacation Slots ({totalAvailable})
+              </h2>
+              <p className="text-sm text-muted-foreground">
+                These are the vacation weeks available across your NFTs. Click to book.
+              </p>
+            </div>
 
-                  <div className="grid grid-cols-2 gap-4 text-sm">
-                    <div className="flex items-center gap-2">
-                      <Users className="h-4 w-4" />
-                      <span>Villa: {Number(week.villaSlots)}</span>
+            <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {availableSlots.map((slot) => (
+                <Card key={`${slot.tokenId}-${slot.vacationId}`} className="overflow-hidden">
+                  <CardHeader>
+                    <div className="flex justify-between items-start">
+                      <CardTitle className="text-lg">Vacation #{slot.vacationId}</CardTitle>
+                      <Badge variant="outline">NFT #{slot.tokenId}</Badge>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Star className="h-4 w-4" />
-                      <span>Luxury: {Number(week.luxurySlots)}</span>
-                    </div>
-                  </div>
-
-                  {week.catamaranDays && (
+                  </CardHeader>
+                  <CardContent className="space-y-4">
                     <div className="flex items-center gap-2 text-sm">
-                      <Anchor className="h-4 w-4" />
-                      <span>Catamaran: {week.catamaranDays}</span>
+                      <MapPin className="h-4 w-4 text-muted-foreground" />
+                      <span className="font-medium">{slot.location}</span>
                     </div>
-                  )}
 
-                  <div className="pt-4">
-                    <Button onClick={() => handleBookWeek(week)} className="w-full" disabled={!isConnected}>
-                      {!isConnected ? "Connect Wallet to Book" : "Book Vacation"}
-                    </Button>
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
-          </div>
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Calendar className="h-4 w-4" />
+                      <span>{slot.startDate} - {slot.endDate}</span>
+                    </div>
+
+                    <div className="pt-2">
+                      <Button
+                        onClick={() => handleBookSlot(slot)}
+                        className="w-full"
+                      >
+                        Book This Vacation
+                      </Button>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </>
         )}
       </div>
 
-      {/* Booking Form Dialog */}
-      <Dialog open={showBookingForm} onOpenChange={setShowBookingForm}>
-        <DialogContent className="max-w-2xl">
+      {/* Confirmation Dialog */}
+      <Dialog open={showConfirmDialog} onOpenChange={setShowConfirmDialog}>
+        <DialogContent>
           <DialogHeader>
-            <DialogTitle>Book Vacation Week #{selectedWeek?.weekId}</DialogTitle>
+            <DialogTitle>Confirm Booking</DialogTitle>
           </DialogHeader>
 
-          {selectedWeek && (
+          {selectedSlot && (
             <div className="space-y-6">
-              <div className="bg-muted p-4 rounded-lg">
-                <h3 className="font-semibold mb-2">Vacation Details</h3>
-                <p className="text-sm text-muted-foreground">
-                  {pugliaContract.formatDate(selectedWeek.startDate)} -{" "}
-                  {pugliaContract.formatDate(selectedWeek.endDate)}
-                </p>
-                <p className="text-sm">
-                  Season:{" "}
-                  <Badge className={getSeasonBadgeColor(selectedWeek.season)}>
-                    {pugliaContract.getSeasonName(selectedWeek.season)}
-                  </Badge>
-                </p>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="guestName">Guest Name *</Label>
-                  <Input
-                    id="guestName"
-                    value={bookingData.guestName}
-                    onChange={(e) => setBookingData((prev) => ({ ...prev, guestName: e.target.value }))}
-                    placeholder="Enter guest name"
-                  />
+              <div className="bg-muted p-4 rounded-lg space-y-3">
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-4 w-4" />
+                  <span className="font-semibold">{selectedSlot.location}</span>
                 </div>
-
-                <div>
-                  <Label htmlFor="contactInfo">Contact Information *</Label>
-                  <Input
-                    id="contactInfo"
-                    value={bookingData.contactInfo}
-                    onChange={(e) => setBookingData((prev) => ({ ...prev, contactInfo: e.target.value }))}
-                    placeholder="Email or phone number"
-                  />
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Calendar className="h-4 w-4" />
+                  <span>{selectedSlot.startDate} - {selectedSlot.endDate}</span>
                 </div>
-
-                <div>
-                  <Label htmlFor="specialRequests">Special Requests</Label>
-                  <Textarea
-                    id="specialRequests"
-                    value={bookingData.specialRequests}
-                    onChange={(e) => setBookingData((prev) => ({ ...prev, specialRequests: e.target.value }))}
-                    placeholder="Any special requests or requirements"
-                  />
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Vacation ID: </span>
+                  <span className="font-medium">#{selectedSlot.vacationId}</span>
+                </div>
+                <div className="text-sm">
+                  <span className="text-muted-foreground">Using NFT Token: </span>
+                  <span className="font-medium">#{selectedSlot.tokenId}</span>
                 </div>
               </div>
 
               <div className="flex gap-4">
-                <Button variant="outline" onClick={() => setShowBookingForm(false)} className="flex-1">
+                <Button
+                  variant="outline"
+                  onClick={() => setShowConfirmDialog(false)}
+                  className="flex-1"
+                  disabled={isBooking}
+                >
                   Cancel
                 </Button>
                 <Button
                   onClick={handleConfirmBooking}
-                  disabled={isBooking || !bookingData.guestName || !bookingData.contactInfo}
+                  disabled={isBooking}
                   className="flex-1"
                 >
-                  {isBooking ? "Processing..." : "Select NFTs & Book"}
+                  {isBooking ? (
+                    <>
+                      <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      Booking...
+                    </>
+                  ) : (
+                    <>
+                      <CheckCircle className="h-4 w-4 mr-2" />
+                      Confirm Booking
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
           )}
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={nftSelection.showNFTSelection}
-        onOpenChange={(open) => setNftSelection((prev) => ({ ...prev, showNFTSelection: open }))}
-      >
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Select NFTs for Booking</DialogTitle>
-          </DialogHeader>
-
-          <div className="space-y-6">
-            <div className="bg-muted p-4 rounded-lg">
-              <p className="text-sm">
-                Season:{" "}
-                <Badge className={getSeasonBadgeColor(selectedWeek?.season || 0)}>
-                  {selectedWeek ? pugliaContract.getSeasonName(selectedWeek.season) : ""}
-                </Badge>
-              </p>
-              <p className="text-sm mt-2">
-                Required NFTs: <strong>{nftSelection.requiredNFTs}</strong>
-              </p>
-              <p className="text-sm">
-                Selected:{" "}
-                <strong>
-                  {nftSelection.selectedNFTs.length}/{nftSelection.requiredNFTs}
-                </strong>
-              </p>
-            </div>
-
-            {nftSelection.isApproving ? (
-              <div className="text-center py-8">
-                <div className="space-y-4">
-                  <div className="text-lg font-semibold">Processing Booking...</div>
-                  <div className="text-sm text-muted-foreground">
-                    {nftSelection.approvalStep > 0 && nftSelection.approvalStep <= nftSelection.selectedNFTs.length
-                      ? `Approving NFT ${nftSelection.approvalStep}/${nftSelection.selectedNFTs.length}...`
-                      : nftSelection.approvalStep > nftSelection.selectedNFTs.length
-                        ? "Finalizing booking..."
-                        : "Starting approval process..."}
-                  </div>
-                  <div className="w-full bg-gray-200 rounded-full h-2">
-                    <div
-                      className="bg-primary h-2 rounded-full transition-all duration-300"
-                      style={{
-                        width: `${(nftSelection.approvalStep / (nftSelection.selectedNFTs.length + 1)) * 100}%`,
-                      }}
-                    />
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <>
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {userNFTs.map((tokenId) => (
-                    <Card
-                      key={tokenId.toString()}
-                      className={`cursor-pointer transition-all ${
-                        nftSelection.selectedNFTs.includes(tokenId)
-                          ? "ring-2 ring-primary bg-primary/5"
-                          : "hover:bg-muted/50"
-                      }`}
-                      onClick={() => {
-                        const isSelected = nftSelection.selectedNFTs.includes(tokenId)
-                        if (isSelected || nftSelection.selectedNFTs.length < nftSelection.requiredNFTs) {
-                          handleNFTSelection(tokenId, !isSelected)
-                        }
-                      }}
-                    >
-                      <CardContent className="p-4 text-center">
-                        <div className="text-lg font-bold">NFT #{tokenId.toString()}</div>
-                        <div className="text-sm text-muted-foreground">Available</div>
-                        {nftSelection.selectedNFTs.includes(tokenId) && <Badge className="mt-2">Selected</Badge>}
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-
-                <div className="flex gap-4">
-                  <Button
-                    variant="outline"
-                    onClick={() => setNftSelection((prev) => ({ ...prev, showNFTSelection: false }))}
-                    className="flex-1"
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    onClick={handleFinalBooking}
-                    disabled={nftSelection.selectedNFTs.length !== nftSelection.requiredNFTs}
-                    className="flex-1"
-                  >
-                    Approve NFTs & Book ({nftSelection.selectedNFTs.length}/{nftSelection.requiredNFTs})
-                  </Button>
-                </div>
-              </>
-            )}
-          </div>
         </DialogContent>
       </Dialog>
     </div>

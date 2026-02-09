@@ -12,15 +12,11 @@ import { BookingManagement } from "@/components/admin/booking-management"
 import { AdminService } from "@/lib/admin"
 import { useAuth } from "@/hooks/use-auth"
 import { BlockchainConfig } from "@/components/admin/blockchain-config"
-import { pugliaContract, type VacationWeek } from "@/lib/blockchain/puglia-contract"
 import { useWallet } from "@/lib/blockchain/wallet"
 import { VacationManagement } from "@/components/admin/vacation-management"
 import { InvestorManagement } from "@/components/admin/investor-management"
 
 export default function AdminPage() {
-  const [contractVacationWeeks, setContractVacationWeeks] = useState<Array<VacationWeek & { weekId: number }>>([])
-  const [isLoadingContractData, setIsLoadingContractData] = useState(false)
-
   const [projectStats, setProjectStats] = useState(AdminService.getProjectStats())
   const [userStats, setUserStats] = useState(AdminService.getUserStats())
   const [seasons, setSeasons] = useState(AdminService.getSeasonConfigs())
@@ -39,27 +35,7 @@ export default function AdminPage() {
     }
 
     refreshData()
-    loadContractData()
   }, [user, router])
-
-  const loadContractData = async () => {
-    if (!isConnected) {
-      console.log("[v0] Wallet not connected, skipping contract data load")
-      return
-    }
-
-    setIsLoadingContractData(true)
-    try {
-      console.log("[v0] Loading vacation weeks from contract...")
-      const weeks = await pugliaContract.getAllActiveVacationWeeks()
-      console.log("[v0] Loaded vacation weeks:", weeks)
-      setContractVacationWeeks(weeks)
-    } catch (error) {
-      console.error("[v0] Error loading contract data:", error)
-    } finally {
-      setIsLoadingContractData(false)
-    }
-  }
 
   const refreshData = () => {
     setProjectStats(AdminService.getProjectStats())
@@ -68,7 +44,6 @@ export default function AdminPage() {
     setUsers(AdminService.getAllUsers())
     setBookings(AdminService.getAllBookingsWithDetails())
     setSalesReports(AdminService.getSalesReports())
-    loadContractData()
   }
 
   if (!user || user.role !== "admin") {
@@ -91,7 +66,7 @@ export default function AdminPage() {
           <div className="flex justify-between items-center">
             <div>
               <h1 className="text-3xl font-bold text-primary">Admin Dashboard</h1>
-              <p className="text-muted-foreground mt-1">Manage your NFT Puglia Vacation platform</p>
+              <p className="text-muted-foreground mt-1">Manage your NFT Puglia Vacation platform (V2)</p>
             </div>
             <div className="flex gap-4">
               <Button variant="outline" onClick={() => router.push("/dashboard")}>
@@ -108,10 +83,9 @@ export default function AdminPage() {
       {/* Main Content */}
       <div className="container mx-auto px-4 py-8">
         <Tabs defaultValue="overview" className="space-y-6">
-          <TabsList className="grid w-full grid-cols-9">
+          <TabsList className="grid w-full grid-cols-8">
             <TabsTrigger value="overview">Overview</TabsTrigger>
             <TabsTrigger value="vacations">Vacations</TabsTrigger>
-            <TabsTrigger value="management">Management</TabsTrigger>
             <TabsTrigger value="investors">Investors</TabsTrigger>
             <TabsTrigger value="seasons">Seasons</TabsTrigger>
             <TabsTrigger value="users">Users</TabsTrigger>
@@ -126,20 +100,14 @@ export default function AdminPage() {
             <div className="grid md:grid-cols-2 gap-6">
               <Card>
                 <CardHeader>
-                  <CardTitle>Contract Data Overview</CardTitle>
-                  <CardDescription>Real-time data from smart contract</CardDescription>
+                  <CardTitle>Contract Info</CardTitle>
+                  <CardDescription>V2 Smart Contract on Polygon</CardDescription>
                 </CardHeader>
                 <CardContent>
                   {!isConnected ? (
                     <p className="text-muted-foreground">Connect wallet to view contract data</p>
-                  ) : isLoadingContractData ? (
-                    <p className="text-muted-foreground">Loading contract data...</p>
                   ) : (
                     <div className="space-y-3">
-                      <div className="flex justify-between items-center p-3 bg-muted rounded-lg">
-                        <span className="text-sm">Active Vacation Weeks</span>
-                        <span className="font-semibold">{contractVacationWeeks.length}</span>
-                      </div>
                       <div className="flex justify-between items-center p-3 bg-muted rounded-lg">
                         <span className="text-sm">Contract Address</span>
                         <span className="text-xs font-mono">0x8bAc...9432</span>
@@ -147,6 +115,10 @@ export default function AdminPage() {
                       <div className="flex justify-between items-center p-3 bg-muted rounded-lg">
                         <span className="text-sm">Network</span>
                         <span className="text-sm">Polygon Mainnet</span>
+                      </div>
+                      <div className="flex justify-between items-center p-3 bg-muted rounded-lg">
+                        <span className="text-sm">Contract Version</span>
+                        <span className="text-sm font-semibold">V2</span>
                       </div>
                     </div>
                   )}
@@ -159,8 +131,8 @@ export default function AdminPage() {
                   <CardDescription>Common administrative tasks</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
-                  <Button variant="outline" className="w-full justify-start bg-transparent" onClick={loadContractData}>
-                    Refresh Contract Data
+                  <Button variant="outline" className="w-full justify-start bg-transparent" onClick={refreshData}>
+                    Refresh Data
                   </Button>
                   <Button variant="outline" className="w-full justify-start bg-transparent">
                     Export User Data
@@ -168,96 +140,12 @@ export default function AdminPage() {
                   <Button variant="outline" className="w-full justify-start bg-transparent">
                     Generate Sales Report
                   </Button>
-                  <Button variant="outline" className="w-full justify-start bg-transparent">
-                    Send Platform Announcement
-                  </Button>
                 </CardContent>
               </Card>
             </div>
           </TabsContent>
 
-          <TabsContent value="vacations" className="space-y-6">
-            <div>
-              <div className="flex justify-between items-center mb-6">
-                <div>
-                  <h2 className="text-2xl font-bold text-primary">Vacation Weeks</h2>
-                  <p className="text-muted-foreground">Manage vacation weeks from smart contract</p>
-                </div>
-                <Button onClick={loadContractData} disabled={isLoadingContractData}>
-                  {isLoadingContractData ? "Loading..." : "Refresh"}
-                </Button>
-              </div>
-
-              {!isConnected ? (
-                <Card>
-                  <CardContent className="p-6 text-center">
-                    <p className="text-muted-foreground">
-                      Connect your wallet to view vacation weeks from the contract
-                    </p>
-                  </CardContent>
-                </Card>
-              ) : contractVacationWeeks.length === 0 ? (
-                <Card>
-                  <CardContent className="p-6 text-center">
-                    <p className="text-muted-foreground">No active vacation weeks found in the contract</p>
-                  </CardContent>
-                </Card>
-              ) : (
-                <div className="grid gap-6">
-                  {contractVacationWeeks.map((week) => (
-                    <Card key={week.weekId}>
-                      <CardHeader>
-                        <CardTitle>Week #{week.weekId}</CardTitle>
-                        <CardDescription>
-                          {pugliaContract.formatDate(week.startDate)} - {pugliaContract.formatDate(week.endDate)}
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent>
-                        <div className="grid md:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Season:</span>
-                              <span className="font-semibold">{pugliaContract.getSeasonName(week.season)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Villa Slots:</span>
-                              <span className="font-semibold">{week.villaSlots.toString()}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Luxury Slots:</span>
-                              <span className="font-semibold">{week.luxurySlots.toString()}</span>
-                            </div>
-                          </div>
-                          <div className="space-y-2">
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Villa Value:</span>
-                              <span className="font-semibold">{week.villaValue.toString()}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Luxury Value:</span>
-                              <span className="font-semibold">{week.luxuryValue.toString()}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-muted-foreground">Status:</span>
-                              <span className={`font-semibold ${week.isActive ? "text-green-600" : "text-red-600"}`}>
-                                {week.isActive ? "Active" : "Inactive"}
-                              </span>
-                            </div>
-                          </div>
-                        </div>
-                        <div className="mt-4">
-                          <span className="text-muted-foreground">Catamaran Days: </span>
-                          <span className="font-semibold">{week.catamaranDays}</span>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
-            </div>
-          </TabsContent>
-
-          <TabsContent value="management">
+          <TabsContent value="vacations">
             <VacationManagement />
           </TabsContent>
 

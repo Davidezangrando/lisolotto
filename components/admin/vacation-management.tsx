@@ -5,327 +5,435 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
-import { pugliaContract, type Season } from "@/lib/blockchain/puglia-contract"
+import { Badge } from "@/components/ui/badge"
+import { Separator } from "@/components/ui/separator"
+import { pugliaContract } from "@/lib/blockchain/puglia-contract"
 import { useWallet } from "@/lib/blockchain/wallet"
 import { toast } from "sonner"
+import { Loader2, Calendar, MapPin, AlertTriangle, Plus, Trash2, Eye } from "lucide-react"
 
 export function VacationManagement() {
   const { isConnected } = useWallet()
-  const [isLoading, setIsLoading] = useState(false)
 
-  // Create Vacation Week Form
-  const [createForm, setCreateForm] = useState({
+  // ─── Batch Create State ───
+  const [batchForm, setBatchForm] = useState({
+    seasonStartDate: "",
+    numberOfWeeks: "12",
+    location: "Puglia",
+  })
+  const [generatedWeeks, setGeneratedWeeks] = useState<
+    Array<{ startDate: number; endDate: number; dateLabel: string }>
+  >([])
+  const [isBatchCreating, setIsBatchCreating] = useState(false)
+
+  // ─── Single Create State ───
+  const [singleForm, setSingleForm] = useState({
     startDate: "",
     endDate: "",
-    season: "",
-    villaSlots: "",
-    luxurySlots: "",
-    villaValue: "",
-    luxuryValue: "",
-    catamaranDays: "",
+    location: "",
   })
+  const [isSingleCreating, setIsSingleCreating] = useState(false)
 
-  // Remove Vacation Week Form
-  const [removeWeekId, setRemoveWeekId] = useState("")
+  // ─── Emergency Cancel State ───
+  const [cancelVacationId, setCancelVacationId] = useState("")
+  const [isCancelling, setIsCancelling] = useState(false)
 
-  // Update Season Cost Form
-  const [seasonCostForm, setSeasonCostForm] = useState({
-    season: "",
-    nftCost: "",
-  })
+  // ─── Vacation Lookup State ───
+  const [lookupId, setLookupId] = useState("")
+  const [lookupResult, setLookupResult] = useState<{
+    startDate: string
+    endDate: string
+    location: string
+    isBooked: boolean
+    bookedByToken: string
+  } | null>(null)
+  const [isLooking, setIsLooking] = useState(false)
 
-  const handleCreateVacationWeek = async () => {
-    if (!isConnected) {
-      toast.error("Connect your wallet first")
+  // ─── Batch Generate Preview ───
+  const handleGeneratePreview = () => {
+    if (!batchForm.seasonStartDate || !batchForm.numberOfWeeks) {
+      toast.error("Please select a start date and number of weeks")
       return
     }
 
-    if (!createForm.startDate || !createForm.endDate || !createForm.season) {
-      toast.error("Please fill in all required fields")
-      return
-    }
+    const start = new Date(batchForm.seasonStartDate)
+    const numWeeks = parseInt(batchForm.numberOfWeeks)
+    const weeks: Array<{ startDate: number; endDate: number; dateLabel: string }> = []
 
-    setIsLoading(true)
-    try {
-      const startTimestamp = Math.floor(new Date(createForm.startDate).getTime() / 1000)
-      const endTimestamp = Math.floor(new Date(createForm.endDate).getTime() / 1000)
+    for (let i = 0; i < numWeeks; i++) {
+      const weekStart = new Date(start)
+      weekStart.setDate(weekStart.getDate() + i * 7)
 
-      const tx = await pugliaContract.createVacationWeek(
-        startTimestamp,
-        endTimestamp,
-        Number.parseInt(createForm.season) as Season,
-        Number.parseInt(createForm.villaSlots) || 0,
-        Number.parseInt(createForm.luxurySlots) || 0,
-        BigInt(createForm.villaValue || "0"),
-        BigInt(createForm.luxuryValue || "0"),
-        createForm.catamaranDays,
-      )
+      const weekEnd = new Date(weekStart)
+      weekEnd.setDate(weekEnd.getDate() + 6)
 
-      toast.success("Transaction submitted! Waiting for confirmation...")
-      await tx.wait()
-      toast.success("Vacation week created successfully!")
-
-      // Reset form
-      setCreateForm({
-        startDate: "",
-        endDate: "",
-        season: "",
-        villaSlots: "",
-        luxurySlots: "",
-        villaValue: "",
-        luxuryValue: "",
-        catamaranDays: "",
+      weeks.push({
+        startDate: Math.floor(weekStart.getTime() / 1000),
+        endDate: Math.floor(weekEnd.getTime() / 1000),
+        dateLabel: `${weekStart.toLocaleDateString("it-IT")} - ${weekEnd.toLocaleDateString("it-IT")}`,
       })
-    } catch (error: any) {
-      console.error("Error creating vacation week:", error)
-      toast.error(error.message || "Failed to create vacation week")
-    } finally {
-      setIsLoading(false)
     }
+
+    setGeneratedWeeks(weeks)
+    toast.success(`Generated preview for ${numWeeks} weeks`)
   }
 
-  const handleRemoveVacationWeek = async () => {
+  const handleBatchCreate = async () => {
     if (!isConnected) {
       toast.error("Connect your wallet first")
       return
     }
 
-    if (!removeWeekId) {
-      toast.error("Please enter a week ID")
+    if (generatedWeeks.length === 0) {
+      toast.error("Generate a preview first")
       return
     }
 
-    setIsLoading(true)
+    setIsBatchCreating(true)
     try {
-      const tx = await pugliaContract.removeVacationWeek(Number.parseInt(removeWeekId))
-      toast.success("Transaction submitted! Waiting for confirmation...")
+      const startDates = generatedWeeks.map((w) => w.startDate)
+      const endDates = generatedWeeks.map((w) => w.endDate)
+      const locations = generatedWeeks.map(() => batchForm.location)
+
+      const tx = await pugliaContract.batchCreateVacations(startDates, endDates, locations)
+      toast.info("Transaction submitted! Waiting for confirmation...")
       await tx.wait()
-      toast.success("Vacation week removed successfully!")
-      setRemoveWeekId("")
+      toast.success(`${generatedWeeks.length} vacation slots created successfully!`)
+
+      setGeneratedWeeks([])
+      setBatchForm({ seasonStartDate: "", numberOfWeeks: "12", location: "Puglia" })
     } catch (error: any) {
-      console.error("Error removing vacation week:", error)
-      toast.error(error.message || "Failed to remove vacation week")
+      console.error("Error batch creating vacations:", error)
+      toast.error(error.reason || error.message || "Failed to create vacations")
     } finally {
-      setIsLoading(false)
+      setIsBatchCreating(false)
     }
   }
 
-  const handleUpdateSeasonCost = async () => {
+  // ─── Single Create ───
+  const handleSingleCreate = async () => {
     if (!isConnected) {
       toast.error("Connect your wallet first")
       return
     }
 
-    if (!seasonCostForm.season || !seasonCostForm.nftCost) {
+    if (!singleForm.startDate || !singleForm.endDate || !singleForm.location) {
       toast.error("Please fill in all fields")
       return
     }
 
-    setIsLoading(true)
+    setIsSingleCreating(true)
     try {
-      const tx = await pugliaContract.updateSeasonCost(
-        Number.parseInt(seasonCostForm.season) as Season,
-        Number.parseInt(seasonCostForm.nftCost),
-      )
-      toast.success("Transaction submitted! Waiting for confirmation...")
+      const startTimestamp = Math.floor(new Date(singleForm.startDate).getTime() / 1000)
+      const endTimestamp = Math.floor(new Date(singleForm.endDate).getTime() / 1000)
+
+      const tx = await pugliaContract.createVacation(startTimestamp, endTimestamp, singleForm.location)
+      toast.info("Transaction submitted! Waiting for confirmation...")
       await tx.wait()
-      toast.success("Season cost updated successfully!")
-      setSeasonCostForm({ season: "", nftCost: "" })
+      toast.success("Vacation slot created successfully!")
+
+      setSingleForm({ startDate: "", endDate: "", location: "" })
     } catch (error: any) {
-      console.error("Error updating season cost:", error)
-      toast.error(error.message || "Failed to update season cost")
+      console.error("Error creating vacation:", error)
+      toast.error(error.reason || error.message || "Failed to create vacation")
     } finally {
-      setIsLoading(false)
+      setIsSingleCreating(false)
+    }
+  }
+
+  // ─── Emergency Cancel ───
+  const handleEmergencyCancel = async () => {
+    if (!isConnected) {
+      toast.error("Connect your wallet first")
+      return
+    }
+
+    if (!cancelVacationId) {
+      toast.error("Please enter a vacation ID")
+      return
+    }
+
+    setIsCancelling(true)
+    try {
+      const tx = await pugliaContract.adminCancelBooking(parseInt(cancelVacationId))
+      toast.info("Transaction submitted! Waiting for confirmation...")
+      await tx.wait()
+      toast.success(`Booking for vacation #${cancelVacationId} force-cancelled!`)
+      setCancelVacationId("")
+    } catch (error: any) {
+      console.error("Error force-cancelling:", error)
+      toast.error(error.reason || error.message || "Failed to cancel booking")
+    } finally {
+      setIsCancelling(false)
+    }
+  }
+
+  // ─── Vacation Lookup ───
+  const handleLookup = async () => {
+    if (!lookupId) {
+      toast.error("Please enter a vacation ID")
+      return
+    }
+
+    setIsLooking(true)
+    setLookupResult(null)
+    try {
+      const vacation = await pugliaContract.getVacation(parseInt(lookupId))
+      setLookupResult({
+        startDate: pugliaContract.formatDate(vacation.startDate),
+        endDate: pugliaContract.formatDate(vacation.endDate),
+        location: vacation.location,
+        isBooked: vacation.isBooked,
+        bookedByToken: vacation.bookedByToken > BigInt(0) ? vacation.bookedByToken.toString() : "N/A",
+      })
+    } catch (error: any) {
+      console.error("Error looking up vacation:", error)
+      toast.error("Vacation not found or error fetching data")
+    } finally {
+      setIsLooking(false)
     }
   }
 
   return (
     <div className="space-y-6">
       <div>
-        <h2 className="text-2xl font-bold text-primary mb-4">Vacation Management</h2>
-        <p className="text-muted-foreground">Manage vacation weeks and season costs</p>
+        <h2 className="text-2xl font-bold text-primary mb-2">Vacation Management</h2>
+        <p className="text-muted-foreground">Create vacation slots and manage bookings</p>
       </div>
 
       <div className="grid md:grid-cols-2 gap-6">
-        {/* Create Vacation Week */}
+        {/* ─── Batch Vacation Creator ─── */}
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Plus className="h-5 w-5" />
+              Batch Vacation Creator
+            </CardTitle>
+            <CardDescription>
+              Generate consecutive weekly vacation slots for an entire season in one transaction
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            <div className="grid md:grid-cols-3 gap-4">
+              <div>
+                <Label htmlFor="batchStartDate">Season Start Date</Label>
+                <Input
+                  id="batchStartDate"
+                  type="date"
+                  value={batchForm.seasonStartDate}
+                  onChange={(e) => setBatchForm({ ...batchForm, seasonStartDate: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="numWeeks">Number of Weeks</Label>
+                <Input
+                  id="numWeeks"
+                  type="number"
+                  min="1"
+                  max="52"
+                  value={batchForm.numberOfWeeks}
+                  onChange={(e) => setBatchForm({ ...batchForm, numberOfWeeks: e.target.value })}
+                />
+              </div>
+              <div>
+                <Label htmlFor="batchLocation">Location</Label>
+                <Input
+                  id="batchLocation"
+                  value={batchForm.location}
+                  onChange={(e) => setBatchForm({ ...batchForm, location: e.target.value })}
+                  placeholder="e.g., Puglia"
+                />
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <Button variant="outline" onClick={handleGeneratePreview}>
+                <Calendar className="h-4 w-4 mr-2" />
+                Generate Preview
+              </Button>
+              <Button
+                onClick={handleBatchCreate}
+                disabled={isBatchCreating || !isConnected || generatedWeeks.length === 0}
+              >
+                {isBatchCreating ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Creating {generatedWeeks.length} weeks...
+                  </>
+                ) : (
+                  `Create ${generatedWeeks.length} Vacation Slots`
+                )}
+              </Button>
+            </div>
+
+            {generatedWeeks.length > 0 && (
+              <div className="border rounded-lg p-4 max-h-60 overflow-y-auto">
+                <p className="text-sm font-medium mb-3">
+                  Preview: {generatedWeeks.length} weeks starting from{" "}
+                  {new Date(batchForm.seasonStartDate).toLocaleDateString("it-IT")}
+                </p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                  {generatedWeeks.map((week, i) => (
+                    <div key={i} className="text-xs p-2 bg-muted rounded flex items-center gap-1">
+                      <Badge variant="outline" className="text-[10px]">W{i + 1}</Badge>
+                      <span>{week.dateLabel}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* ─── Single Vacation Creator ─── */}
         <Card>
           <CardHeader>
-            <CardTitle>Create Vacation Week</CardTitle>
-            <CardDescription>Add a new vacation week to the contract</CardDescription>
+            <CardTitle>Create Single Vacation</CardTitle>
+            <CardDescription>Add an individual vacation slot</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <Label htmlFor="startDate">Start Date</Label>
+                <Label htmlFor="singleStart">Start Date</Label>
                 <Input
-                  id="startDate"
+                  id="singleStart"
                   type="date"
-                  value={createForm.startDate}
-                  onChange={(e) => setCreateForm({ ...createForm, startDate: e.target.value })}
+                  value={singleForm.startDate}
+                  onChange={(e) => setSingleForm({ ...singleForm, startDate: e.target.value })}
                 />
               </div>
               <div>
-                <Label htmlFor="endDate">End Date</Label>
+                <Label htmlFor="singleEnd">End Date</Label>
                 <Input
-                  id="endDate"
+                  id="singleEnd"
                   type="date"
-                  value={createForm.endDate}
-                  onChange={(e) => setCreateForm({ ...createForm, endDate: e.target.value })}
+                  value={singleForm.endDate}
+                  onChange={(e) => setSingleForm({ ...singleForm, endDate: e.target.value })}
                 />
               </div>
             </div>
-
             <div>
-              <Label htmlFor="season">Season</Label>
-              <Select
-                value={createForm.season}
-                onValueChange={(value) => setCreateForm({ ...createForm, season: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select season" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="0">Bassa (1 NFT)</SelectItem>
-                  <SelectItem value="1">Bassa-Media (2 NFT)</SelectItem>
-                  <SelectItem value="2">Media (3 NFT)</SelectItem>
-                  <SelectItem value="3">Alta (4 NFT)</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="villaSlots">Villa Slots</Label>
-                <Input
-                  id="villaSlots"
-                  type="number"
-                  value={createForm.villaSlots}
-                  onChange={(e) => setCreateForm({ ...createForm, villaSlots: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label htmlFor="luxurySlots">Luxury Slots</Label>
-                <Input
-                  id="luxurySlots"
-                  type="number"
-                  value={createForm.luxurySlots}
-                  onChange={(e) => setCreateForm({ ...createForm, luxurySlots: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <Label htmlFor="villaValue">Villa Value</Label>
-                <Input
-                  id="villaValue"
-                  type="number"
-                  value={createForm.villaValue}
-                  onChange={(e) => setCreateForm({ ...createForm, villaValue: e.target.value })}
-                />
-              </div>
-              <div>
-                <Label htmlFor="luxuryValue">Luxury Value</Label>
-                <Input
-                  id="luxuryValue"
-                  type="number"
-                  value={createForm.luxuryValue}
-                  onChange={(e) => setCreateForm({ ...createForm, luxuryValue: e.target.value })}
-                />
-              </div>
-            </div>
-
-            <div>
-              <Label htmlFor="catamaranDays">Catamaran Days</Label>
-              <Textarea
-                id="catamaranDays"
-                value={createForm.catamaranDays}
-                onChange={(e) => setCreateForm({ ...createForm, catamaranDays: e.target.value })}
-                placeholder="e.g., 3 gg Villa + 3 gg Luxury (max)"
+              <Label htmlFor="singleLocation">Location</Label>
+              <Input
+                id="singleLocation"
+                value={singleForm.location}
+                onChange={(e) => setSingleForm({ ...singleForm, location: e.target.value })}
+                placeholder="e.g., Puglia, Villa Marina"
               />
             </div>
-
-            <Button onClick={handleCreateVacationWeek} disabled={isLoading || !isConnected} className="w-full">
-              {isLoading ? "Creating..." : "Create Vacation Week"}
+            <Button
+              onClick={handleSingleCreate}
+              disabled={isSingleCreating || !isConnected}
+              className="w-full"
+            >
+              {isSingleCreating ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Creating...
+                </>
+              ) : (
+                "Create Vacation Slot"
+              )}
             </Button>
           </CardContent>
         </Card>
 
-        {/* Remove Vacation Week */}
+        {/* ─── Vacation Lookup ─── */}
         <Card>
           <CardHeader>
-            <CardTitle>Remove Vacation Week</CardTitle>
-            <CardDescription>Remove a vacation week (only if no active bookings)</CardDescription>
+            <CardTitle className="flex items-center gap-2">
+              <Eye className="h-5 w-5" />
+              Vacation Lookup
+            </CardTitle>
+            <CardDescription>Inspect a specific vacation slot by ID</CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div>
-              <Label htmlFor="removeWeekId">Week ID</Label>
+            <div className="flex gap-2">
               <Input
-                id="removeWeekId"
                 type="number"
-                value={removeWeekId}
-                onChange={(e) => setRemoveWeekId(e.target.value)}
-                placeholder="Enter week ID to remove"
+                value={lookupId}
+                onChange={(e) => setLookupId(e.target.value)}
+                placeholder="Vacation ID"
               />
+              <Button onClick={handleLookup} disabled={isLooking} variant="outline">
+                {isLooking ? <Loader2 className="h-4 w-4 animate-spin" /> : "Lookup"}
+              </Button>
             </div>
 
-            <Button
-              onClick={handleRemoveVacationWeek}
-              disabled={isLoading || !isConnected}
-              variant="destructive"
-              className="w-full"
-            >
-              {isLoading ? "Removing..." : "Remove Vacation Week"}
-            </Button>
+            {lookupResult && (
+              <div className="border rounded-lg p-4 space-y-2">
+                <div className="flex items-center gap-2">
+                  <MapPin className="h-4 w-4" />
+                  <span className="font-medium">{lookupResult.location}</span>
+                </div>
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Calendar className="h-3 w-3" />
+                  <span>{lookupResult.startDate} - {lookupResult.endDate}</span>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant={lookupResult.isBooked ? "destructive" : "default"}>
+                    {lookupResult.isBooked ? "Booked" : "Available"}
+                  </Badge>
+                  {lookupResult.isBooked && (
+                    <span className="text-xs text-muted-foreground">
+                      by Token #{lookupResult.bookedByToken}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Update Season Cost */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Update Season Cost</CardTitle>
-          <CardDescription>Update the NFT cost for each season</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid md:grid-cols-3 gap-4">
-            <div>
-              <Label htmlFor="seasonSelect">Season</Label>
-              <Select
-                value={seasonCostForm.season}
-                onValueChange={(value) => setSeasonCostForm({ ...seasonCostForm, season: value })}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder="Select season" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="0">Bassa</SelectItem>
-                  <SelectItem value="1">Bassa-Media</SelectItem>
-                  <SelectItem value="2">Media</SelectItem>
-                  <SelectItem value="3">Alta</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
+      <Separator />
 
-            <div>
-              <Label htmlFor="nftCost">NFT Cost</Label>
+      {/* ─── Emergency Controls ─── */}
+      <Card className="border-red-200">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-red-600">
+            <AlertTriangle className="h-5 w-5" />
+            Emergency Controls
+          </CardTitle>
+          <CardDescription>
+            Force-cancel bookings as admin. This bypasses user cancellation deadlines.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-3">
+            <div className="flex-1">
+              <Label htmlFor="emergencyCancelId">Vacation ID to Force-Cancel</Label>
               <Input
-                id="nftCost"
+                id="emergencyCancelId"
                 type="number"
-                value={seasonCostForm.nftCost}
-                onChange={(e) => setSeasonCostForm({ ...seasonCostForm, nftCost: e.target.value })}
-                placeholder="Number of NFTs required"
+                value={cancelVacationId}
+                onChange={(e) => setCancelVacationId(e.target.value)}
+                placeholder="Enter vacation ID"
               />
             </div>
-
             <div className="flex items-end">
-              <Button onClick={handleUpdateSeasonCost} disabled={isLoading || !isConnected} className="w-full">
-                {isLoading ? "Updating..." : "Update Cost"}
+              <Button
+                variant="destructive"
+                onClick={handleEmergencyCancel}
+                disabled={isCancelling || !isConnected || !cancelVacationId}
+              >
+                {isCancelling ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Cancelling...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Force Cancel
+                  </>
+                )}
               </Button>
             </div>
           </div>
+          <p className="text-xs text-muted-foreground">
+            Use the Vacation Lookup above to inspect a vacation before force-cancelling.
+          </p>
         </CardContent>
       </Card>
     </div>
